@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>autoDen 系統視覺預覽</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <style>
+        #print-container {
+            display: none;
+        }
+
+        @media print {
+            body {
+                background: white !important;
+                color: black !important;
+            }
+            .no-print, nav, header, main, section {
+                display: none !important;
+            }
+            #print-container {
+                display: block !important;
+                background: white !important;
+            }
+            .print-slip-page {
+                page-break-after: always;
+                margin: 0 !important;
+                padding: 2.5rem !important;
+                box-shadow: none !important;
+                border: none !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                background: white !important;
+                color: black !important;
+            }
+            .print-slip-page:last-child {
+                page-break-after: auto;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans" x-data="systemPreview()">
+
+    <!-- 頂部視圖切換導覽列 (列印時隱藏) -->
+    <nav class="no-print border-b border-slate-800 bg-slate-900/90 px-6 py-3 flex items-center justify-between sticky top-0 z-50">
+        <div class="flex items-center space-x-3">
+            <span class="w-3 h-3 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
+            <span class="font-bold tracking-wider text-sm">autoDen WMS 視覺預覽系統</span>
+        </div>
+        <div class="flex items-center space-x-2">
+            <button @click="tab = 'entry'" :class="tab === 'entry' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg text-xs font-bold transition">銷貨建單與配批</button>
+            <button @click="tab = 'slip'" :class="tab === 'slip' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg text-xs font-bold transition">揀貨單列印</button>
+            <button @click="tab = 'gate'" :class="tab === 'gate' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg text-xs font-bold transition">品保閘門</button>
+            <button @click="tab = 'admin'" :class="tab === 'admin' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg text-xs font-bold transition">Admin 中控台</button>
+            <button @click="tab = 'security'" :class="tab === 'security' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg text-xs font-bold transition">帳號資安</button>
+            <button @click="tab = 'arch'" :class="tab === 'arch' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'" class="px-3 py-1.5 rounded-lg text-xs font-bold transition">系統架構流程</button>
+        </div>
+    </nav>
+
+    <!-- 視圖 0: 階段二 銷貨需求輸入與 FEFO 配批 (含同步 ERP 主檔按鈕與雙擊快查功能) -->
+    <section x-show="tab === 'entry'" class="no-print flex-1 p-6">
+        <div class="max-w-[1680px] mx-auto space-y-6">
+            <header class="border-b border-slate-800 bg-slate-900/60 px-6 py-4 rounded-2xl flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <span class="w-3 h-3 rounded-full bg-indigo-500"></span>
+                    <h1 class="text-lg font-bold tracking-wider uppercase">銷貨建單與 FEFO 配批</h1>
+                </div>
+                <div class="text-xs font-mono text-slate-400">
+                    建單作業員: <span class="text-slate-200">operator01@den.local</span>
+                </div>
+            </header>
+
+            <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+                <!-- 需求輸入面板 -->
+                <div class="xl:col-span-4 bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-4">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-sm font-bold uppercase tracking-wider text-slate-300">單頭與品項需求</h3>
+                        <!-- 本地 ERP 快取同步狀態標記 -->
+                        <span class="text-[11px] font-mono text-slate-400" x-text="`主檔同步: ${erpLastSyncTime}`"></span>
+                    </div>
+
+                    <!-- 單頭輸入 -->
+                    <div class="grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                            <label class="block text-slate-400 mb-1">客戶編碼</label>
+                            <input type="text" x-model="entryForm.customer_code" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none" />
+                        </div>
+                        <div>
+                            <label class="block text-slate-400 mb-1">出貨日期</label>
+                            <input type="text" x-model="entryForm.order_date" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none" />
+                        </div>
+                    </div>
+
+                    <!-- 出貨日期下方按鈕列：同步 ERP 主檔 與 新增品項 並排切齊 -->
+                    <div class="flex justify-between items-center pt-2 border-t border-slate-800">
+                        <span class="text-xs font-bold text-slate-400">品項清單</span>
+                        <div class="flex items-center space-x-2">
+                            <!-- 同步 ERP 主檔按鈕 (切齊新增品項) -->
+                            <button @click="syncErpMasterData()" :disabled="isSyncingErp"
+                                    class="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg font-bold transition flex items-center space-x-1.5 shadow disabled:opacity-50" title="自 ECOUNT ERP API 拉取最新商品主檔至本地資料庫">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 text-cyan-400" :class="{ 'animate-spin': isSyncingErp }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                                </svg>
+                                <span x-text="isSyncingErp ? '同步中...' : '同步 ERP 主檔'"></span>
+                            </button>
+
+                            <!-- 新增品項按鈕 -->
+                            <button @click="addEntryItem()" class="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-bold transition flex items-center space-x-1 shadow">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                <span>新增品項</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 動態品項清單 (品號/品名/條碼支援雙擊彈出快查視窗，垃圾桶常駐) -->
+                    <div class="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+                        <template x-for="(item, idx) in entryForm.items" :key="idx">
+                            <div class="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800 space-y-2.5">
+                                <div class="flex justify-between items-center">
+                                    <div class="flex items-center space-x-2">
+                                        <span class="text-[10px] font-mono text-indigo-400 font-bold" x-text="`品項 #${idx + 1}`"></span>
+                                        <span class="text-[9px] font-mono text-slate-500">(雙擊欄位可快查 ERP)</span>
+                                    </div>
+                                    <!-- 垃圾桶常駐純向量 SVG -->
+                                    <button type="button" @click="removeEntryItem(idx)" class="text-rose-400 hover:text-rose-200 hover:bg-rose-950/60 p-1.5 rounded-lg transition border border-rose-900/40 flex items-center justify-center" title="刪除或清空此品項">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M3 6h18"></path>
+                                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                                            <line x1="10" y1="11" x2="10" y2="17"></line>
+                                            <line x1="14" y1="11" x2="14" y2="17"></line>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2 text-xs">
+                                    <div>
+                                        <label class="block text-[10px] text-slate-400 mb-0.5">品號 (雙擊開快查)</label>
+                                        <input type="text" x-model="item.item_code" @dblclick="openErpLookup(item)" @input="syncProductInfo(item, 'code')" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-white font-mono focus:border-indigo-500 focus:outline-none cursor-pointer" placeholder="雙擊彈出 ERP 搜尋" title="雙擊可彈出 ERP 品項搜尋視窗" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] text-slate-400 mb-0.5">品名 (雙擊開快查)</label>
+                                        <input type="text" x-model="item.item_name" @dblclick="openErpLookup(item)" @input="syncProductInfo(item, 'name')" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-white focus:border-indigo-500 focus:outline-none cursor-pointer" placeholder="雙擊彈出 ERP 搜尋" title="雙擊可彈出 ERP 品項搜尋視窗" />
+                                    </div>
+                                </div>
+                                <div class="grid grid-cols-3 gap-2 text-xs">
+                                    <div class="col-span-2">
+                                        <label class="block text-[10px] text-slate-400 mb-0.5">商品條碼 / GTIN (雙擊開快查)</label>
+                                        <input type="text" x-model="item.barcode" @dblclick="openErpLookup(item)" @input="syncProductInfo(item, 'barcode')" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-white font-mono focus:border-indigo-500 focus:outline-none cursor-pointer" placeholder="刷讀或雙擊搜尋" title="雙擊可彈出 ERP 品項搜尋視窗" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-[10px] text-slate-400 mb-0.5">需求數</label>
+                                        <input type="number" :id="`qty-input-${idx}`" x-model.number="item.qty_demanded" min="1" class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-white font-mono focus:border-indigo-500 focus:outline-none" />
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <button @click="runFefoSimulation()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl transition text-xs flex items-center justify-center space-x-2 shadow">
+                        <i data-lucide="calculator" class="w-4 h-4"></i>
+                        <span>執行 FEFO 算批與拆單</span>
+                    </button>
+                </div>
+
+                <!-- FEFO 拆批結果展示 (加寬表格、品名加寬、不換行) -->
+                <div class="xl:col-span-8 bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-4 flex flex-col justify-between">
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-sm font-bold uppercase tracking-wider text-slate-300">FEFO 配批產出明細 (Allocation Lines)</h3>
+                            <span class="text-xs font-mono text-emerald-400 font-bold">效期升冪排序</span>
+                        </div>
+
+                        <div class="overflow-x-auto rounded-xl border border-slate-800">
+                            <table class="w-full text-left text-xs border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 bg-slate-950/60 text-slate-400 uppercase font-mono">
+                                        <th class="py-3 px-4 whitespace-nowrap">品號</th>
+                                        <th class="py-3 px-4 min-w-[240px]">品名</th>
+                                        <th class="py-3 px-4 whitespace-nowrap">條碼 (GTIN)</th>
+                                        <th class="py-3 px-4 whitespace-nowrap">儲位</th>
+                                        <th class="py-3 px-4 whitespace-nowrap">配批 (LOT)</th>
+                                        <th class="py-3 px-4 whitespace-nowrap">有效期限</th>
+                                        <th class="py-3 px-4 text-right whitespace-nowrap">配批數</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800">
+                                    <template x-for="(line, idx) in allocatedLines" :key="idx">
+                                        <tr class="hover:bg-slate-800/30 transition">
+                                            <td class="py-3.5 px-4 font-mono font-bold text-white whitespace-nowrap" x-text="line.item_code"></td>
+                                            <td class="py-3.5 px-4 text-slate-200 font-sans break-words" x-text="line.item_name"></td>
+                                            <td class="py-3.5 px-4 text-slate-300 font-mono text-[11px] whitespace-nowrap" x-text="line.barcode"></td>
+                                            <td class="py-3.5 px-4 text-indigo-300 font-mono font-bold whitespace-nowrap" x-text="line.location_code"></td>
+                                            <td class="py-3.5 px-4 text-amber-300 font-mono font-bold whitespace-nowrap" x-text="line.allocated_lot"></td>
+                                            <td class="py-3.5 px-4 text-slate-300 font-mono whitespace-nowrap" x-text="line.allocated_exp"></td>
+                                            <td class="py-3.5 px-4 text-right font-mono font-bold text-emerald-400 text-sm whitespace-nowrap" x-text="line.qty_allocated"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 flex justify-between items-center border-t border-slate-800 text-xs mt-4">
+                        <span class="text-slate-400 font-mono">總配額筆數: <span class="text-white font-bold" x-text="allocatedLines.length"></span> 列</span>
+                        <button @click="tab = 'slip'" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-2 rounded-lg transition flex items-center space-x-1.5 shadow">
+                            <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+                            <span>進入揀貨單列印中心 →</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ERP 品項快查視窗 (雙擊品號/品名/條碼時彈出) -->
+        <div x-show="showErpLookupModal" class="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" style="display: none;">
+            <div class="bg-slate-900 border border-slate-800 max-w-3xl w-full rounded-2xl p-6 space-y-5 shadow-2xl">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <div class="flex items-center space-x-2.5">
+                        <span class="w-3 h-3 rounded-full bg-cyan-400"></span>
+                        <h3 class="text-sm font-bold text-white uppercase tracking-wider">ECOUNT ERP 品項主檔快查</h3>
+                    </div>
+                    <button @click="showErpLookupModal = false" class="text-slate-400 hover:text-white">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <!-- 關鍵字過濾搜尋列 -->
+                <div class="relative">
+                    <input type="text" x-ref="lookupKeywordInput" x-model="erpLookupKeyword" placeholder="請輸入品號、品名關鍵字或商品條碼過濾..." class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-sans" />
+                    <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute left-3.5 top-2.5"></i>
+                </div>
+
+                <!-- 品項搜尋結果清單 -->
+                <div class="overflow-x-auto rounded-xl border border-slate-800 max-h-80 overflow-y-auto">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 bg-slate-950 text-slate-400 uppercase font-mono sticky top-0 z-10">
+                                <th class="py-2.5 px-4 whitespace-nowrap">品號 (PROD_CD)</th>
+                                <th class="py-2.5 px-4">品名規格 (PROD_DES)</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">商品條碼 (BAR_CODE)</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">預設儲位</th>
+                                <th class="py-2.5 px-4 text-right">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800 font-mono">
+                            <template x-for="p in filteredProductCatalog" :key="p.item_code">
+                                <tr class="hover:bg-slate-800/40 transition cursor-pointer" @click="selectLookupProduct(p)">
+                                    <td class="py-3 px-4 font-bold text-white whitespace-nowrap" x-text="p.item_code"></td>
+                                    <td class="py-3 px-4 text-slate-200 font-sans" x-text="p.item_name"></td>
+                                    <td class="py-3 px-4 text-slate-400 text-[11px] whitespace-nowrap" x-text="p.barcode"></td>
+                                    <td class="py-3 px-4 text-indigo-300 font-bold whitespace-nowrap" x-text="p.default_loc"></td>
+                                    <td class="py-3 px-4 text-right">
+                                        <button type="button" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-2.5 py-1 rounded text-[11px] transition">帶入</button>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="filteredProductCatalog.length === 0">
+                                <td colspan="5" class="text-center py-6 text-slate-500 font-sans">查無相符之 ERP 品項資料</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="flex justify-between items-center text-xs text-slate-400 pt-1">
+                    <span>提示：點擊任一列即可將資料自動回填至建單清單。</span>
+                    <button type="button" @click="showErpLookupModal = false" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-1.5 rounded-lg transition font-bold">取消</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 視圖 1: 揀貨單列印中心 -->
+    <section x-show="tab === 'slip'" class="no-print flex-1 p-6">
+        <div class="max-w-5xl mx-auto space-y-6">
+            <header class="border-b border-slate-800 bg-slate-900/60 px-6 py-4 rounded-2xl flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <span class="w-3 h-3 rounded-full bg-indigo-500"></span>
+                    <h1 class="text-lg font-bold tracking-wider uppercase">揀貨單列印管理</h1>
+                </div>
+                <div class="flex items-center space-x-2 text-xs">
+                    <button @click="printSelectedOrders()" :disabled="selectedSlipOrders.length === 0"
+                            :class="selectedSlipOrders.length > 0 ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-600 cursor-not-allowed'"
+                            class="px-4 py-2 rounded-lg font-bold transition flex items-center space-x-1.5 shadow">
+                        <i data-lucide="printer" class="w-4 h-4"></i>
+                        <span>列印勾選單據 (<span x-text="selectedSlipOrders.length"></span>)</span>
+                    </button>
+                    <button @click="printAllOrders()" class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white px-4 py-2 rounded-lg font-bold transition flex items-center space-x-1.5">
+                        <i data-lucide="copy" class="w-4 h-4"></i>
+                        <span>全部列印</span>
+                    </button>
+                </div>
+            </header>
+
+            <div class="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
+                <table class="w-full text-left text-xs border-collapse">
+                    <thead>
+                        <tr class="border-b border-slate-800 bg-slate-950/40 text-slate-400 uppercase font-mono">
+                            <th class="py-3 px-4 w-10 text-center">
+                                <input type="checkbox" @change="toggleSelectAllSlips($event.target.checked)" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0" />
+                            </th>
+                            <th class="py-3 px-6">單號</th>
+                            <th class="py-3 px-6">客戶編碼</th>
+                            <th class="py-3 px-6">品項數</th>
+                            <th class="py-3 px-6">列印狀態</th>
+                            <th class="py-3 px-6 text-right">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-800 font-mono">
+                        <template x-for="order in slipOrderList" :key="order.order_id">
+                            <tr class="hover:bg-slate-800/30 transition">
+                                <td class="py-4 px-4 text-center">
+                                    <input type="checkbox" :value="order.order_id" x-model="selectedSlipOrders" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0" />
+                                </td>
+                                <td class="py-4 px-6 font-bold text-white" x-text="order.order_id"></td>
+                                <td class="py-4 px-6 text-slate-300" x-text="order.customer_code"></td>
+                                <td class="py-4 px-6 text-slate-300" x-text="`${order.item_count} 項 (${order.total_qty} 支)`"></td>
+                                <td class="py-4 px-6">
+                                    <span class="px-2.5 py-1 rounded-full text-[10px] font-bold"
+                                          :class="order.printed ? 'bg-slate-800 text-slate-300 border border-slate-700' : 'bg-amber-950 text-amber-300 border border-amber-500/30'"
+                                          x-text="order.printed ? '已列印 (可重印)' : '未列印'"></span>
+                                </td>
+                                <td class="py-4 px-6 text-right">
+                                    <button @click="printSingleOrder(order.order_id)" class="text-indigo-400 hover:text-indigo-300 font-bold px-2 py-1 flex items-center space-x-1.5 ml-auto">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                                            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                                            <rect x="6" y="14" width="12" height="8"></rect>
+                                        </svg>
+                                        <span>單張列印</span>
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- 視圖 2: 打包品保閘門 (Industrial Dark) -->
+    <section x-show="tab === 'gate'" class="no-print flex-1 p-6">
+        <div class="max-w-5xl mx-auto space-y-6">
+            <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs">
+                <span class="text-slate-400 font-mono">狀態模擬切換：</span>
+                <div class="space-x-2">
+                    <button @click="gateStatus = 'IDLE'" class="px-2.5 py-1 rounded bg-slate-800 text-slate-300 hover:bg-slate-700">待機 (IDLE)</button>
+                    <button @click="setPass()" class="px-2.5 py-1 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-900">綠燈核對 (PASS)</button>
+                    <button @click="setLock()" class="px-2.5 py-1 rounded bg-rose-950 text-rose-300 border border-rose-500/40 hover:bg-rose-900">紅燈死鎖 (LOCK)</button>
+                    <button @click="toggleComplete()" class="px-2.5 py-1 rounded bg-indigo-950 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-900">齊件完成切換</button>
+                </div>
+            </div>
+
+            <header class="border-b border-slate-800 bg-slate-900/60 px-6 py-4 rounded-2xl flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
+                    <h1 class="text-lg font-bold tracking-wider uppercase">autoDen QA-Gate</h1>
+                </div>
+                <div class="flex items-center space-x-4 text-xs font-mono">
+                    <span class="text-slate-400">目前單號: <span class="text-indigo-400 font-bold" x-text="orderId"></span></span>
+                    <span class="text-slate-400">作業員: <span class="text-slate-200">operator01@den.local</span></span>
+                </div>
+            </header>
+
+            <main class="space-y-6">
+                <input type="text" x-ref="barcodeInput" @keydown.enter="handleScan($event.target.value); $event.target.value = '';" 
+                       class="opacity-0 absolute -z-10 focus:outline-none" autofocus />
+
+                <div class="h-64 rounded-3xl border flex flex-col items-center justify-center transition-all duration-200 shadow-2xl p-6"
+                     :class="{
+                        'bg-slate-900/80 border-slate-800 text-slate-400': gateStatus === 'IDLE',
+                        'bg-emerald-950/80 border-emerald-500 text-emerald-400': gateStatus === 'PASS',
+                        'bg-rose-950/80 border-rose-500 text-rose-400 animate-pulse': gateStatus === 'LOCK'
+                     }">
+                    <template x-if="gateStatus === 'IDLE'">
+                        <div class="text-center">
+                            <i data-lucide="scan" class="w-16 h-16 mx-auto mb-2 opacity-50"></i>
+                            <p class="text-xl font-bold">請刷讀商品外盒 GS1 條碼</p>
+                            <p class="text-xs font-mono text-slate-500 mt-1">條碼槍已就緒 (GTIN / 品號 / LOT / EXP 全項目對撞)</p>
+                        </div>
+                    </template>
+                    <template x-if="gateStatus === 'PASS'">
+                        <div class="text-center space-y-2">
+                            <i data-lucide="check-circle" class="w-16 h-16 mx-auto text-emerald-400"></i>
+                            <p class="text-3xl font-black tracking-tight" x-text="statusMessage"></p>
+                            <div class="flex items-center justify-center space-x-3 text-xs font-mono bg-emerald-900/50 border border-emerald-500/40 px-4 py-1.5 rounded-full text-emerald-200 mt-2">
+                                <span>條碼 GTIN 合格</span>
+                                <span>•</span>
+                                <span>批號 LOT: 00821A 合格</span>
+                                <span>•</span>
+                                <span>效期 EXP: 2027-06-30 合格</span>
+                            </div>
+                        </div>
+                    </template>
+                    <template x-if="gateStatus === 'LOCK'">
+                        <div class="text-center space-y-2">
+                            <i data-lucide="alert-octagon" class="w-16 h-16 mx-auto text-rose-500"></i>
+                            <p class="text-3xl font-black tracking-tight" x-text="statusMessage"></p>
+                            <div class="text-xs font-mono text-rose-200 bg-rose-900/50 border border-rose-500/40 px-4 py-1.5 rounded-full mt-2 inline-block">
+                                警報原因：實刷 GTIN / 批號 / 效期與目標預配不相符！
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="bg-slate-900/40 border border-slate-800 rounded-2xl p-6">
+                    <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">品保勾稽清單 (條碼 / 品號 / LOT / EXP 全核對)</h3>
+                    <div class="space-y-3">
+                        <template x-for="item in items" :key="item.id">
+                            <div class="flex items-center justify-between p-4 rounded-xl border transition"
+                                 :class="item.scanned >= item.qty_allocated ? 'bg-emerald-950/20 border-emerald-500/30' : 'bg-slate-800/40 border-slate-700/60'">
+                                <div class="space-y-1">
+                                    <div class="flex items-center space-x-3">
+                                        <span class="text-sm font-bold text-white" x-text="`${item.item_code} - ${item.item_name}`"></span>
+                                        <span class="text-[11px] font-mono bg-indigo-950/60 border border-indigo-500/40 text-indigo-300 px-2 py-0.5 rounded" x-text="`儲位: ${item.location_code}`"></span>
+                                    </div>
+                                    <div class="flex items-center space-x-4 text-xs font-mono text-slate-400">
+                                        <span>目標 GTIN: <span class="text-slate-200 font-bold" x-text="item.barcode"></span></span>
+                                        <span>•</span>
+                                        <span>目標 LOT: <span class="text-amber-300 font-bold" x-text="item.allocated_lot"></span></span>
+                                        <span>•</span>
+                                        <span>目標 EXP: <span class="text-emerald-300 font-bold" x-text="item.allocated_exp"></span></span>
+                                    </div>
+                                </div>
+                                <div class="text-right">
+                                    <span class="text-2xl font-mono font-bold" :class="item.scanned >= item.qty_allocated ? 'text-emerald-400' : 'text-slate-200'" x-text="`${item.scanned}/${item.qty_allocated}`"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div x-show="allCompleted" class="p-6 rounded-2xl bg-indigo-950/40 border border-indigo-500/40 text-center space-y-2">
+                    <div class="text-lg font-bold text-indigo-300">✅ 全單品保檢驗 100% 合格齊件</div>
+                    <div class="text-xs text-slate-400">狀態已更新為 <span class="font-mono font-bold text-white">[VERIFIED]</span>。資料已鎖定並寫入本地稽核日誌。</div>
+                </div>
+            </main>
+        </div>
+    </section>
+
+    <!-- 視圖 3: Admin 審核與拋轉中控台 -->
+    <section x-show="tab === 'admin'" class="no-print flex-1 p-6">
+        <div class="max-w-6xl mx-auto space-y-8 text-slate-100">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-4">
+                <div>
+                    <h1 class="text-2xl font-bold">autoDen 系統管理中控台</h1>
+                </div>
+                <span class="text-xs font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-3 py-1 rounded-full">Admin: admin@autoden.lan</span>
+            </div>
+
+            <div class="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
+                <div class="px-6 py-4 border-b border-slate-800 flex flex-wrap justify-between items-center gap-4">
+                    <div class="flex items-center space-x-2">
+                        <h3 class="text-sm font-bold uppercase tracking-wider text-slate-300 mr-2">單據狀態總覽</h3>
+                        <div class="flex bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-mono">
+                            <button @click="filterStatus = 'ALL'" :class="filterStatus === 'ALL' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'" class="px-2.5 py-1 rounded transition">全部</button>
+                            <button @click="filterStatus = 'VERIFIED'" :class="filterStatus === 'VERIFIED' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'" class="px-2.5 py-1 rounded transition">待拋轉 (VERIFIED)</button>
+                            <button @click="filterStatus = 'SYNCED'" :class="filterStatus === 'SYNCED' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'" class="px-2.5 py-1 rounded transition">已過帳 (SYNCED)</button>
+                            <button @click="filterStatus = 'FAILED'" :class="filterStatus === 'FAILED' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'" class="px-2.5 py-1 rounded transition">異常 (FAILED)</button>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center space-x-3">
+                        <div class="relative">
+                            <input type="text" x-model="searchKeyword" placeholder="搜尋單號或客戶代碼..." class="bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500" />
+                            <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2"></i>
+                        </div>
+
+                        <button @click="batchDownloadCsv()" :disabled="selectedOrderIds.length === 0"
+                                :class="selectedOrderIds.length > 0 ? 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200' : 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed'"
+                                class="px-3 py-1.5 rounded-lg font-bold text-xs transition flex items-center space-x-1" title="待提供 CSV 範本對接">
+                            <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 text-emerald-400"></i>
+                            <span>批次下載 CSV (<span x-text="selectedOrderIds.length"></span>)</span>
+                        </button>
+
+                        <button @click="batchSyncSelected()" :disabled="selectedOrderIds.length === 0" 
+                                :class="selectedOrderIds.length > 0 ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-800 text-slate-600 cursor-not-allowed'"
+                                class="px-3 py-1.5 rounded-lg font-bold text-xs transition flex items-center space-x-1">
+                            <i data-lucide="upload-cloud" class="w-3.5 h-3.5"></i>
+                            <span>批次 API 拋轉 (<span x-text="selectedOrderIds.length"></span>)</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 bg-slate-950/40 text-slate-400 uppercase font-mono">
+                                <th class="py-3 px-4 w-10 text-center">
+                                    <input type="checkbox" @change="toggleSelectAllVerified($event.target.checked)" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0" />
+                                </th>
+                                <th class="py-3 px-6">單號 (點擊檢視明細)</th>
+                                <th class="py-3 px-6">客戶編碼</th>
+                                <th class="py-3 px-6">建單日期</th>
+                                <th class="py-3 px-6">狀態</th>
+                                <th class="py-3 px-6">建立者</th>
+                                <th class="py-3 px-6 text-right">操作管理</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800 font-mono">
+                            <template x-for="order in filteredOrders" :key="order.order_id">
+                                <tr class="hover:bg-slate-800/30 transition">
+                                    <td class="py-4 px-4 text-center">
+                                        <input type="checkbox" :value="order.order_id" x-model="selectedOrderIds" :disabled="order.status !== 'VERIFIED'" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0 disabled:opacity-20" />
+                                    </td>
+                                    <td class="py-4 px-6 font-bold text-indigo-400 hover:text-indigo-300 cursor-pointer underline underline-offset-4"
+                                        @click="openOrderDetailModal(order)"
+                                        x-text="order.order_id"></td>
+                                    <td class="py-4 px-6 text-slate-300" x-text="order.customer_code"></td>
+                                    <td class="py-4 px-6 text-slate-300 font-mono" x-text="order.order_date"></td>
+                                    <td class="py-4 px-6">
+                                        <span class="px-2.5 py-1 rounded-full text-[10px] font-bold" :class="{
+                                                  'bg-slate-800 text-slate-400': order.status === 'SCANNING',
+                                                  'bg-indigo-950 text-indigo-400 border border-indigo-500/30': order.status === 'VERIFIED',
+                                                  'bg-emerald-950 text-emerald-400 border border-emerald-500/30': order.status === 'SYNCED',
+                                                  'bg-rose-950 text-rose-400 border border-rose-500/30': order.status === 'FAILED'
+                                              }" x-text="order.status"></span>
+                                    </td>
+                                    <td class="py-4 px-6 text-slate-400" x-text="order.created_by"></td>
+                                    <td class="py-4 px-6 text-right space-x-1.5">
+                                        <button @click="downloadSingleCsv(order.order_id)" :disabled="order.status !== 'VERIFIED'"
+                                                :class="order.status === 'VERIFIED' ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700' : 'bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-800'"
+                                                class="px-2.5 py-1.5 rounded-lg font-bold text-xs transition" title="待提供 CSV 範本對接">
+                                            下載 CSV
+                                        </button>
+                                        <button @click="syncToEcount(order.order_id)" :disabled="order.status !== 'VERIFIED'"
+                                                :class="order.status === 'VERIFIED' ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : 'bg-slate-800 text-slate-600 cursor-not-allowed'"
+                                                class="px-3 py-1.5 rounded-lg font-bold text-xs transition">
+                                            API 直拋過帳
+                                        </button>
+                                        <button x-show="order.status === 'SYNCED'" @click="forceResync(order.order_id)"
+                                                class="bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg font-bold text-xs transition">
+                                            強制重拋 (Admin)
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 訂單明細檢視彈窗 (Modal) -->
+        <div x-show="showDetailModal" class="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" style="display: none;">
+            <div class="bg-slate-900 border border-slate-800 max-w-4xl w-full rounded-2xl p-6 space-y-6 shadow-2xl">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <div class="flex items-center space-x-3">
+                        <span class="w-3 h-3 rounded-full bg-indigo-500"></span>
+                        <h3 class="text-sm font-bold text-white uppercase tracking-wider font-mono" x-text="`單據明細檢視：${currentDetailOrder.order_id}`"></h3>
+                    </div>
+                    <button @click="showDetailModal = false" class="text-slate-400 hover:text-white">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-4 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs font-mono">
+                    <div>
+                        <span class="text-slate-500 block">客戶編碼</span>
+                        <span class="text-white font-bold" x-text="currentDetailOrder.customer_code"></span>
+                    </div>
+                    <div>
+                        <span class="text-slate-500 block">建單日期</span>
+                        <span class="text-white font-bold" x-text="currentDetailOrder.order_date"></span>
+                    </div>
+                    <div>
+                        <span class="text-slate-500 block">目前狀態</span>
+                        <span class="text-indigo-400 font-bold" x-text="currentDetailOrder.status"></span>
+                    </div>
+                    <div>
+                        <span class="text-slate-500 block">建立人員</span>
+                        <span class="text-slate-300" x-text="currentDetailOrder.created_by"></span>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto rounded-xl border border-slate-800">
+                    <table class="w-full text-left text-xs border-collapse font-mono">
+                        <thead>
+                            <tr class="border-b border-slate-800 bg-slate-950/60 text-slate-400 uppercase">
+                                <th class="py-2.5 px-4 whitespace-nowrap">品號</th>
+                                <th class="py-2.5 px-4">品名</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">條碼 (GTIN)</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">儲位</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">目標 LOT</th>
+                                <th class="py-2.5 px-4 whitespace-nowrap">目標 EXP</th>
+                                <th class="py-2.5 px-4 text-right whitespace-nowrap">預配 / 實刷</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800">
+                            <template x-for="item in currentDetailOrder.items" :key="item.id">
+                                <tr class="hover:bg-slate-800/30">
+                                    <td class="py-3 px-4 font-bold text-white whitespace-nowrap" x-text="item.item_code"></td>
+                                    <td class="py-3 px-4 text-slate-200 font-sans" x-text="item.item_name"></td>
+                                    <td class="py-3 px-4 text-slate-400 text-[11px] whitespace-nowrap" x-text="item.barcode"></td>
+                                    <td class="py-3 px-4 text-indigo-300 font-bold whitespace-nowrap" x-text="item.location_code"></td>
+                                    <td class="py-3 px-4 text-amber-300 font-bold whitespace-nowrap" x-text="item.allocated_lot"></td>
+                                    <td class="py-3 px-4 text-slate-300 whitespace-nowrap" x-text="item.allocated_exp"></td>
+                                    <td class="py-3 px-4 text-right font-bold whitespace-nowrap"
+                                        :class="item.scanned >= item.qty_allocated ? 'text-emerald-400' : 'text-slate-300'"
+                                        x-text="`${item.scanned}/${item.qty_allocated}`"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="flex justify-end pt-2">
+                    <button @click="showDetailModal = false" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold px-4 py-2 rounded-lg transition">
+                        關閉明細
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 視圖 4: 帳號資安 -->
+    <section x-show="tab === 'security'" class="no-print flex-1 p-6">
+        <div class="max-w-6xl mx-auto space-y-6 text-slate-100">
+            <header class="border-b border-slate-800 bg-slate-900/60 px-6 py-4 rounded-2xl flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
+                    <h1 class="text-lg font-bold tracking-wider uppercase">帳號資安</h1>
+                </div>
+                <button @click="openNewUserModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition flex items-center space-x-1.5">
+                    <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
+                    <span>派發新進人員金鑰</span>
+                </button>
+            </header>
+
+            <div class="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden p-6 space-y-6">
+                <h3 class="text-sm font-bold uppercase tracking-wider text-slate-300">系統人員 2FA 金鑰名冊</h3>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 bg-slate-950/40 text-slate-400 uppercase font-mono">
+                                <th class="py-3 px-4">電子郵件 (Email)</th>
+                                <th class="py-3 px-4">角色權限</th>
+                                <th class="py-3 px-4">TOTP 金鑰識別碼</th>
+                                <th class="py-3 px-4">建立時間</th>
+                                <th class="py-3 px-4 text-right">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800 font-mono">
+                            <template x-for="user in userList" :key="user.email">
+                                <tr class="hover:bg-slate-800/30 transition">
+                                    <td class="py-3 px-4 font-bold text-white" x-text="user.email"></td>
+                                    <td class="py-3 px-4">
+                                        <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                                              :class="user.role === 'admin' ? 'bg-amber-950 text-amber-300 border border-amber-500/30' : 'bg-slate-800 text-slate-300'"
+                                              x-text="user.role"></span>
+                                    </td>
+                                    <td class="py-3 px-4 text-slate-400 font-mono" x-text="user.secret_mask"></td>
+                                    <td class="py-3 px-4 text-slate-400" x-text="user.created_at"></td>
+                                    <td class="py-3 px-4 text-right">
+                                        <button @click="showUserQr(user)" class="text-indigo-400 hover:text-indigo-300 font-bold px-2 py-1">重顯 QR Code</button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div x-show="show2faModal" class="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" style="display: none;">
+            <div class="bg-slate-900 border border-slate-800 max-w-md w-full rounded-2xl p-6 space-y-6 shadow-2xl">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h3 class="text-sm font-bold text-white uppercase tracking-wider">Google Authenticator 2FA 綁定</h3>
+                    <button @click="show2faModal = false" class="text-slate-400 hover:text-white">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <div x-show="modalStep === 'form'" class="space-y-4 text-xs">
+                    <div>
+                        <label class="block text-slate-400 mb-1">人員 Email</label>
+                        <input type="email" x-model="newUserForm.email" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 mb-1">指派角色</label>
+                        <select x-model="newUserForm.role" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono focus:border-indigo-500 focus:outline-none">
+                            <option value="operator">Operator (作業員)</option>
+                            <option value="admin">Admin (管理員)</option>
+                        </select>
+                    </div>
+                    <button @click="generateAndShowQr()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-lg transition">
+                        生成專屬 TOTP 密鑰與 QR Code
+                    </button>
+                </div>
+
+                <div x-show="modalStep === 'qr'" class="space-y-4 text-center text-xs">
+                    <div class="bg-white p-4 rounded-xl inline-block mx-auto shadow">
+                        <canvas id="totp-qrcode" class="mx-auto"></canvas>
+                    </div>
+                    <div class="font-mono text-slate-300">
+                        密鑰明碼: <span class="text-amber-400 font-bold" x-text="generatedSecret"></span>
+                    </div>
+                    <button @click="confirmAddUser()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-lg transition">
+                        完成綁定並寫入名冊
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 視圖 5: 系統架構流程圖 -->
+    <section x-show="tab === 'arch'" class="no-print flex-1 p-6">
+        <div class="max-w-4xl mx-auto space-y-6">
+            <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6">
+                <h2 class="text-lg font-bold text-white mb-4">系統架構流程</h2>
+                <div class="font-mono text-xs text-slate-300 bg-slate-950 p-6 rounded-xl border border-slate-800 leading-relaxed overflow-x-auto">
+                    <pre>[ECOUNT 進貨單 (保留前導零)] ──> [實體抽屜 (One SKU, One Bin 縱深定錨)]
+                                             │
+[業務輸入銷貨需求] ──> [autoDen FEFO 運算] ────┘
+                             │
+                             ▼
+              [autoDen 揀貨單 (隱藏LOT/EXP，僅顯儲位)]
+                             │ (走道拿最前排)
+                             ▼
+              [品保閘門 (掃碼過刷)]
+                ├── 實刷 GS1 拆解 (GTIN / LOT / EXP)
+                ├── 對撞預配目標：綠燈累加 / 紅燈死鎖攔截 (條碼/LOT/EXP 全核對)
+                └── 齊件狀態鎖定 (轉 VERIFIED) ──> 寫入 outbound.log
+                             │
+                             ▼
+              [Admin 後台審核/批次拋轉] ──> [ECOUNT 銷貨單過帳] ──> [印隨箱單出貨]</pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 專門用於列印輸出的隱藏容器 -->
+    <div id="print-container">
+        <template x-for="slip in printQueueSlips" :key="slip.order_id">
+            <div class="print-slip-page">
+                <div class="border-b-2 border-black pb-4 mb-4 flex justify-between items-end">
+                    <div>
+                        <h1 class="text-3xl font-black tracking-tight text-black">autoDen 揀貨單</h1>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-xs font-bold text-neutral-600">單據代碼</span>
+                        <div class="text-xl font-mono font-black text-black" x-text="slip.order_id"></div>
+                    </div>
+                </div>
+                
+                <table class="w-full text-left border-collapse mb-6">
+                    <thead>
+                        <tr class="border-b-2 border-neutral-400 text-xs text-black uppercase">
+                            <th class="py-2.5 font-black whitespace-nowrap">儲位座標 (Bin)</th>
+                            <th class="py-2.5 font-black whitespace-nowrap">品號規格</th>
+                            <th class="py-2.5 font-black">品名</th>
+                            <th class="py-2.5 text-right font-black whitespace-nowrap">需求數</th>
+                            <th class="py-2.5 text-center font-black whitespace-nowrap">拿取確認</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-neutral-300">
+                        <template x-for="line in slip.items" :key="line.location_code + line.item_code + line.allocated_lot">
+                            <tr>
+                                <td class="py-4 font-mono text-2xl font-black text-black whitespace-nowrap" x-text="line.location_code"></td>
+                                <td class="py-4 text-sm font-bold text-black whitespace-nowrap" x-text="line.item_code"></td>
+                                <td class="py-4 text-sm text-black" x-text="line.item_name"></td>
+                                <td class="py-4 text-right font-mono text-xl font-black text-black whitespace-nowrap" x-text="line.qty_allocated"></td>
+                                <td class="py-4 text-center whitespace-nowrap">
+                                    <div class="w-6 h-6 border-2 border-black mx-auto rounded"></div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                
+                <div class="text-center pt-6 border-t border-neutral-300">
+                    <svg :id="`barcode-slip-${slip.order_id}`" class="mx-auto"></svg>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <script>
+        function systemPreview() {
+            return {
+                tab: 'entry',
+                orderId: 'SO-20260910-001',
+                gateStatus: 'PASS',
+                statusMessage: '綠燈放行：核對無誤',
+                lastScannedInfo: '品號: 08801234567895 | LOT: 00821A',
+                allCompleted: false,
+                filterStatus: 'ALL',
+                searchKeyword: '',
+                selectedOrderIds: [],
+                show2faModal: false,
+                modalStep: 'form',
+                generatedSecret: '',
+                newUserForm: { email: '', role: 'operator' },
+                
+                showDetailModal: false,
+                currentDetailOrder: { order_id: '', customer_code: '', order_date: '', status: '', created_by: '', items: [] },
+
+                // ERP 主檔快查與同步狀態
+                showErpLookupModal: false,
+                erpLookupKeyword: '',
+                currentLookupTargetItem: null,
+                isSyncingErp: false,
+                erpLastSyncTime: '今日 10:00',
+
+                productCatalog: [
+                    { item_code: 'AR4010', item_name: '鈦合金骨釘 4.0x10mm', barcode: '08801234567895', default_loc: 'NP-AR01-B-03' },
+                    { item_code: 'AOIALR09', item_name: '微型骨板 9孔左彎', barcode: '08801987654321', default_loc: 'NP-AO02-A-01' },
+                    { item_code: 'ST0112-98', item_name: '一次性精密注射器 5ml (10支/包)', barcode: '08809876543210', default_loc: 'FL-C201-D-01' },
+                    { item_code: 'DR0034-01', item_name: '外科滅菌防護口罩 (50片/盒)', barcode: '08805556667778', default_loc: 'NP-MS01-A-05' },
+                    { item_code: 'BC2005-A', item_name: '醫用無菌紗布墊 3x3吋', barcode: '08807778889990', default_loc: 'NP-GA03-C-02' },
+                    { item_code: 'PL8820-K', item_name: '高分子骨水泥套組 40g', barcode: '08803334445556', default_loc: 'FL-PM02-B-01' }
+                ],
+                
+                userList: [
+                    { email: 'admin@autoden.lan', role: 'admin', secret_mask: 'JBSWY3DPEHPK3PXP...', created_at: '2026-09-10 10:00' },
+                    { email: 'operator01@den.local', role: 'operator', secret_mask: 'MZXW6YTBOJUW4ZZ...', created_at: '2026-09-10 11:30' },
+                    { email: 'operator02@den.local', role: 'operator', secret_mask: 'KRSXG5CTMVRXEZL...', created_at: '2026-09-10 14:15' }
+                ],
+
+                entryForm: {
+                    customer_code: 'CUST-0091',
+                    order_date: '20260910',
+                    items: [
+                        { item_code: 'AR4010', item_name: '鈦合金骨釘 4.0x10mm', barcode: '08801234567895', qty_demanded: 5 },
+                        { item_code: 'AOIALR09', item_name: '微型骨板 9孔左彎', barcode: '08801987654321', qty_demanded: 1 }
+                    ]
+                },
+
+                allocatedLines: [
+                    { item_code: 'AR4010', item_name: '鈦合金骨釘 4.0x10mm', barcode: '08801234567895', location_code: 'NP-AR01-B-03', allocated_lot: '00821A', allocated_exp: '2027-06-30', qty_allocated: 2 },
+                    { item_code: 'AR4010', item_name: '鈦合金骨釘 4.0x10mm', barcode: '08801234567895', location_code: 'NP-AR01-B-03', allocated_lot: '00822B', allocated_exp: '2028-12-31', qty_allocated: 3 },
+                    { item_code: 'AOIALR09', item_name: '微型骨板 9孔左彎', barcode: '08801987654321', location_code: 'NP-AO02-A-01', allocated_lot: 'MG260901A', allocated_exp: '2029-01-15', qty_allocated: 1 }
+                ],
+
+                items: [
+                    { id: 1, item_code: 'AR4010', item_name: '鈦合金骨釘 4.0x10mm', barcode: '08801234567895', location_code: 'NP-AR01-B-03', allocated_lot: '00821A', allocated_exp: '2027-06-30', qty_allocated: 2, scanned: 2 },
+                    { id: 2, item_code: 'AR4010', item_name: '鈦合金骨釘 4.0x10mm', barcode: '08801234567895', location_code: 'NP-AR01-B-03', allocated_lot: '00822B', allocated_exp: '2028-12-31', qty_allocated: 3, scanned: 0 },
+                    { id: 3, item_code: 'AOIALR09', item_name: '微型骨板 9孔左彎', barcode: '08801987654321', location_code: 'NP-AO02-A-01', allocated_lot: 'MG260901A', allocated_exp: '2029-01-15', qty_allocated: 1, scanned: 0 }
+                ],
+
+                orders: [
+                    {
+                        order_id: 'SO-20260910-001',
+                        customer_code: 'CUST-0091',
+                        order_date: '2026-09-10',
+                        status: 'VERIFIED',
+                        created_by: 'operator01@den.local',
+                        items: [
+                            { id: 1, item_code: 'AR4010', item_name: '鈦合金骨釘 4.0x10mm', barcode: '08801234567895', location_code: 'NP-AR01-B-03', allocated_lot: '00821A', allocated_exp: '2027-06-30', qty_allocated: 2, scanned: 2 },
+                            { id: 2, item_code: 'AR4010', item_name: '鈦合金骨釘 4.0x10mm', barcode: '08801234567895', location_code: 'NP-AR01-B-03', allocated_lot: '00822B', allocated_exp: '2028-12-31', qty_allocated: 3, scanned: 3 },
+                            { id: 3, item_code: 'AOIALR09', item_name: '微型骨板 9孔左彎', barcode: '08801987654321', location_code: 'NP-AO02-A-01', allocated_lot: 'MG260901A', allocated_exp: '2029-01-15', qty_allocated: 1, scanned: 1 }
+                        ]
+                    },
+                    {
+                        order_id: 'SO-20260910-002',
+                        customer_code: 'CUST-0042',
+                        order_date: '2026-09-10',
+                        status: 'SCANNING',
+                        created_by: 'operator02@den.local',
+                        items: [
+                            { id: 1, item_code: 'ST0112-98', item_name: '一次性精密注射器 5ml (10支/包)', barcode: '08809876543210', location_code: 'FL-C201-D-01', allocated_lot: '260810B', allocated_exp: '2028-05-15', qty_allocated: 3, scanned: 1 }
+                        ]
+                    },
+                    {
+                        order_id: 'SO-20260909-088',
+                        customer_code: 'CUST-0120',
+                        order_date: '2026-09-09',
+                        status: 'SYNCED',
+                        created_by: 'operator01@den.local',
+                        items: [
+                            { id: 1, item_code: 'DR0034-01', item_name: '外科滅菌防護口罩 (50片/盒)', barcode: '08805556667778', location_code: 'NP-MS01-A-05', allocated_lot: '00751K', allocated_exp: '2027-10-01', qty_allocated: 5, scanned: 5 }
+                        ]
+                    },
+                    {
+                        order_id: 'SO-20260909-089',
+                        customer_code: 'CUST-0055',
+                        order_date: '2026-09-09',
+                        status: 'VERIFIED',
+                        created_by: 'operator01@den.local',
+                        items: [
+                            { id: 1, item_code: 'AOIALR09', item_name: '微型骨板 9孔左彎', barcode: '08801987654321', location_code: 'NP-AO02-A-01', allocated_lot: 'MG260901A', allocated_exp: '2029-01-15', qty_allocated: 4, scanned: 4 }
+                        ]
+                    }
+                ],
+
+                selectedSlipOrders: [],
+                printQueueSlips: [],
+                slipOrderList: [
+                    { order_id: 'SO-20260910-001', customer_code: 'CUST-0091', item_count: 2, total_qty: 6, printed: true },
+                    { order_id: 'SO-20260910-002', customer_code: 'CUST-0042', item_count: 1, total_qty: 3, printed: false },
+                    { order_id: 'SO-20260910-003', customer_code: 'CUST-0108', item_count: 3, total_qty: 12, printed: false },
+                    { order_id: 'SO-20260909-089', customer_code: 'CUST-0055', item_count: 2, total_qty: 4, printed: true }
+                ],
+
+                init() {
+                    lucide.createIcons();
+                },
+
+                // 手動拉取/同步 ECOUNT ERP 品項主檔
+                syncErpMasterData() {
+                    this.isSyncingErp = true;
+                    setTimeout(() => {
+                        this.isSyncingErp = false;
+                        const now = new Date();
+                        this.erpLastSyncTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')} (已更新)`;
+                    }, 800);
+                },
+
+                // 雙擊開啟 ERP 快查視窗
+                openErpLookup(item) {
+                    this.currentLookupTargetItem = item;
+                    this.erpLookupKeyword = item.item_code || item.item_name || item.barcode || '';
+                    this.showErpLookupModal = true;
+                    this.$nextTick(() => {
+                        lucide.createIcons();
+                        if (this.$refs.lookupKeywordInput) this.$refs.lookupKeywordInput.focus();
+                    });
+                },
+
+                // 快查過濾結果
+                get filteredProductCatalog() {
+                    if (!this.erpLookupKeyword.trim()) return this.productCatalog;
+                    const kw = this.erpLookupKeyword.toLowerCase().trim();
+                    return this.productCatalog.filter(p => 
+                        p.item_code.toLowerCase().includes(kw) ||
+                        p.item_name.toLowerCase().includes(kw) ||
+                        p.barcode.includes(kw)
+                    );
+                },
+
+                // 點選 ERP 快查品項並回填
+                selectLookupProduct(product) {
+                    if (this.currentLookupTargetItem) {
+                        this.currentLookupTargetItem.item_code = product.item_code;
+                        this.currentLookupTargetItem.item_name = product.item_name;
+                        this.currentLookupTargetItem.barcode = product.barcode;
+
+                        const itemIndex = this.entryForm.items.indexOf(this.currentLookupTargetItem);
+                        this.showErpLookupModal = false;
+                        this.$nextTick(() => {
+                            const targetQtyInput = document.getElementById(`qty-input-${itemIndex}`);
+                            if (targetQtyInput) {
+                                targetQtyInput.focus();
+                                targetQtyInput.select();
+                            }
+                        });
+                    }
+                },
+
+                addEntryItem() {
+                    this.entryForm.items.push({ item_code: '', item_name: '', barcode: '', qty_demanded: 1 });
+                    this.$nextTick(() => lucide.createIcons());
+                },
+                removeEntryItem(idx) {
+                    if (this.entryForm.items.length > 1) {
+                        this.entryForm.items.splice(idx, 1);
+                    } else {
+                        this.entryForm.items[0] = { item_code: '', item_name: '', barcode: '', qty_demanded: 1 };
+                    }
+                },
+
+                syncProductInfo(item, triggerField) {
+                    let matched = null;
+                    if (triggerField === 'code' && item.item_code.trim()) {
+                        matched = this.productCatalog.find(p => p.item_code.toLowerCase() === item.item_code.trim().toLowerCase());
+                    } else if (triggerField === 'name' && item.item_name.trim()) {
+                        matched = this.productCatalog.find(p => p.item_name.toLowerCase().includes(item.item_name.trim().toLowerCase()));
+                    } else if (triggerField === 'barcode' && item.barcode.trim()) {
+                        matched = this.productCatalog.find(p => p.barcode === item.barcode.trim());
+                    }
+
+                    if (matched) {
+                        item.item_code = matched.item_code;
+                        item.item_name = matched.item_name;
+                        item.barcode = matched.barcode;
+                    }
+                },
+
+                runFefoSimulation() {
+                    let results = [];
+                    this.entryForm.items.forEach((it, idx) => {
+                        const code = it.item_code.trim();
+                        const name = it.item_name.trim();
+                        const barcode = it.barcode.trim();
+                        const qty = Number(it.qty_demanded) || 1;
+
+                        if (!code && !name && !barcode) return;
+
+                        if (code === 'AR4010' || name.includes('骨釘')) {
+                            if (qty <= 2) {
+                                results.push({
+                                    item_code: code || 'AR4010',
+                                    item_name: name || '鈦合金骨釘 4.0x10mm',
+                                    barcode: barcode || '08801234567895',
+                                    location_code: 'NP-AR01-B-03',
+                                    allocated_lot: '00821A',
+                                    allocated_exp: '2027-06-30',
+                                    qty_allocated: qty
+                                });
+                            } else {
+                                results.push({
+                                    item_code: code || 'AR4010',
+                                    item_name: name || '鈦合金骨釘 4.0x10mm',
+                                    barcode: barcode || '08801234567895',
+                                    location_code: 'NP-AR01-B-03',
+                                    allocated_lot: '00821A',
+                                    allocated_exp: '2027-06-30',
+                                    qty_allocated: 2
+                                });
+                                results.push({
+                                    item_code: code || 'AR4010',
+                                    item_name: name || '鈦合金骨釘 4.0x10mm',
+                                    barcode: barcode || '08801234567895',
+                                    location_code: 'NP-AR01-B-03',
+                                    allocated_lot: '00822B',
+                                    allocated_exp: '2028-12-31',
+                                    qty_allocated: qty - 2
+                                });
+                            }
+                        } else {
+                            results.push({
+                                item_code: code,
+                                item_name: name,
+                                barcode: barcode,
+                                location_code: 'NP-AO02-A-01',
+                                allocated_lot: '00' + (9100 + idx) + 'A',
+                                allocated_exp: '2028-11-20',
+                                qty_allocated: qty
+                            });
+                        }
+                    });
+
+                    this.allocatedLines = results;
+                    this.items = this.allocatedLines.map((l, idx) => ({
+                        id: idx + 1,
+                        item_code: l.item_code,
+                        item_name: l.item_name,
+                        barcode: l.barcode,
+                        location_code: l.location_code,
+                        allocated_lot: l.allocated_lot,
+                        allocated_exp: l.allocated_exp,
+                        qty_allocated: l.qty_allocated,
+                        scanned: 0
+                    }));
+                },
+
+                // 揀貨單列印控制
+                toggleSelectAllSlips(checked) {
+                    if (checked) {
+                        this.selectedSlipOrders = this.slipOrderList.map(o => o.order_id);
+                    } else {
+                        this.selectedSlipOrders = [];
+                    }
+                },
+                printSelectedOrders() {
+                    if (this.selectedSlipOrders.length === 0) return;
+                    this.executePrint(this.selectedSlipOrders);
+                },
+                printAllOrders() {
+                    const allIds = this.slipOrderList.map(o => o.order_id);
+                    this.executePrint(allIds);
+                },
+                printSingleOrder(orderId) {
+                    this.executePrint([orderId]);
+                },
+                executePrint(orderIds) {
+                    this.printQueueSlips = orderIds.map(id => ({
+                        order_id: id,
+                        items: this.allocatedLines
+                    }));
+                    
+                    orderIds.forEach(id => {
+                        const target = this.slipOrderList.find(o => o.order_id === id);
+                        if (target) target.printed = true;
+                    });
+
+                    this.$nextTick(() => {
+                        orderIds.forEach(id => {
+                            try {
+                                JsBarcode(`#barcode-slip-${id}`, id, {
+                                    format: "CODE128",
+                                    width: 2.2,
+                                    height: 55,
+                                    displayValue: true
+                                });
+                            } catch(e) {}
+                        });
+                        window.print();
+                    });
+                },
+
+                get filteredOrders() {
+                    return this.orders.filter(o => {
+                        const matchStatus = (this.filterStatus === 'ALL') || (o.status === this.filterStatus);
+                        const matchKw = !this.searchKeyword || 
+                            o.order_id.toLowerCase().includes(this.searchKeyword.toLowerCase()) || 
+                            o.customer_code.toLowerCase().includes(this.searchKeyword.toLowerCase());
+                        return matchStatus && matchKw;
+                    });
+                },
+                openOrderDetailModal(order) {
+                    this.currentDetailOrder = order;
+                    this.showDetailModal = true;
+                    this.$nextTick(() => lucide.createIcons());
+                },
+                toggleSelectAllVerified(checked) {
+                    if (checked) {
+                        this.selectedOrderIds = this.orders.filter(o => o.status === 'VERIFIED').map(o => o.order_id);
+                    } else {
+                        this.selectedOrderIds = [];
+                    }
+                },
+                batchSyncSelected() {
+                    this.selectedOrderIds.forEach(id => {
+                        const o = this.orders.find(x => x.order_id === id);
+                        if (o && o.status === 'VERIFIED') o.status = 'SYNCED';
+                    });
+                    this.selectedOrderIds = [];
+                },
+                syncToEcount(orderId) {
+                    const o = this.orders.find(x => x.order_id === orderId);
+                    if (o) o.status = 'SYNCED';
+                },
+                forceResync(orderId) {
+                    const o = this.orders.find(x => x.order_id === orderId);
+                    if (o) o.status = 'SYNCED';
+                },
+                batchDownloadCsv() {
+                    console.log("[autoDen CSV 批次匯出預留]", this.selectedOrderIds);
+                },
+                downloadSingleCsv(orderId) {
+                    console.log("[autoDen CSV 單筆匯出預留]", orderId);
+                },
+
+                setPass() {
+                    this.gateStatus = 'PASS';
+                    this.statusMessage = '綠燈放行：核對無誤';
+                    this.lastScannedInfo = '品號: 08801234567895 | LOT: 00821A';
+                    this.$nextTick(() => lucide.createIcons());
+                },
+                setLock() {
+                    this.gateStatus = 'LOCK';
+                    this.statusMessage = '紅燈警報：實刷條碼 / 批號 / 效期不相符！';
+                    this.$nextTick(() => lucide.createIcons());
+                },
+                toggleComplete() {
+                    this.allCompleted = !this.allCompleted;
+                },
+
+                openNewUserModal() {
+                    this.newUserForm = { email: '', role: 'operator' };
+                    this.modalStep = 'form';
+                    this.show2faModal = true;
+                    this.$nextTick(() => lucide.createIcons());
+                },
+                generateAndShowQr() {
+                    if (!this.newUserForm.email) return;
+                    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+                    let sec = '';
+                    for(let i=0; i<32; i++) sec += chars.charAt(Math.floor(Math.random() * chars.length));
+                    this.generatedSecret = sec;
+                    this.modalStep = 'qr';
+                    
+                    const otpauth = `otpauth://totp/autoDen%20WMS:${encodeURIComponent(this.newUserForm.email)}?secret=${sec}&issuer=autoDen%20WMS`;
+                    this.$nextTick(() => {
+                        QRCode.toCanvas(document.getElementById('totp-qrcode'), otpauth, { width: 180, margin: 1 }, function (error) {});
+                    });
+                },
+                showUserQr(user) {
+                    this.newUserForm.email = user.email;
+                    this.newUserForm.role = user.role;
+                    this.generatedSecret = 'JBSWY3DPEHPK3PXP';
+                    this.modalStep = 'qr';
+                    this.show2faModal = true;
+                    const otpauth = `otpauth://totp/autoDen%20WMS:${encodeURIComponent(user.email)}?secret=${this.generatedSecret}&issuer=autoDen%20WMS`;
+                    this.$nextTick(() => {
+                        QRCode.toCanvas(document.getElementById('totp-qrcode'), otpauth, { width: 180, margin: 1 }, function (error) {});
+                        lucide.createIcons();
+                    });
+                },
+                confirmAddUser() {
+                    this.userList.push({
+                        email: this.newUserForm.email,
+                        role: this.newUserForm.role,
+                        secret_mask: this.generatedSecret.substring(0, 16) + '...',
+                        created_at: new Date().toISOString().slice(0, 16).replace('T', ' ')
+                    });
+                    this.show2faModal = false;
+                }
+            }
+        }
+    </script>
+</body>
+</html>

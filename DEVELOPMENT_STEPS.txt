@@ -1,0 +1,108 @@
+================================================================================
+autoDen 系統後續開發與工程實作步驟清單 (DEVELOPMENT STEPS)
+專案方案：方案 A（純內網 0.0.0.0:8000 + TOTP 2FA + 雙軌權限隔離）
+對應文件：Project_Plan.md、preview.html
+================================================================================
+
+【階段一：環境依賴與專案目錄初始化】
+1.1 建立 Python 套件依賴清單 (requirements.txt)：
+    - fastapi >= 0.100.0
+    - uvicorn[standard] >= 0.22.0
+    - pyotp >= 2.8.0
+    - qrcode[pil] >= 7.4.2
+    - pydantic >= 2.0.0
+    - jinja2 >= 3.1.2
+    - python-multipart >= 0.0.6
+1.2 建立專案目錄結構：
+    autoDen/
+    ├── server.py              (FastAPI 核心伺服器)
+    ├── init_db.py             (SQLite 資料庫全結構初始化)
+    ├── init_admin.py          (終端機 Admin 2FA 初始化腳本)
+    ├── gs1_parser.py          (GS1 DataMatrix 解析引擎)
+    ├── fefo_allocator.py      (FEFO 效期分配與拆批演算法)
+    ├── audit_logger.py        (本地追加式稽核記錄器)
+    ├── templates/             (Jinja2 前端動態模板目錄)
+    │   ├── base.html          (母模板與導覽列)
+    │   ├── order_entry.html   (銷貨建單與 FEFO 配批)
+    │   ├── picking_slips.html (揀貨單列印管理)
+    │   ├── scanner.html       (品保掃碼閘門)
+    │   ├── admin.html         (Admin 審核中控台)
+    │   └── security.html      (帳號資安與 2FA 名冊)
+    ├── static/                (離線靜態資源：JS/CSS/條碼庫)
+    ├── autoden.db             (SQLite 實體資料庫，由腳本生成)
+    └── outbound.log           (本地純文字追加日誌)
+
+--------------------------------------------------------------------------------
+
+【階段二：資料庫結構建置與首次管理員綁定】
+2.1 實作 init_db.py：
+    - 建立 users 資料表（帳號、TOTP 密鑰、角色 admin/operator）。
+    - 建立 erp_products 資料表（品號、品名、條碼、預設儲位，供快查快取）。
+    - 建立 orders 資料表（單號、客戶編碼、建單日期、狀態、列印註記、建立者）。
+    - 建立 order_items 資料表（Allocation Line，品號、品名、條碼、儲位、預配批號、預配效期、預配數、實刷數、實刷批號、實刷效期）。
+    - 建立 sync_logs 資料表（ERP 拋轉稽核快照與 API 回應日誌）。
+2.2 實作 init_admin.py：
+    - 於本機終端機輸入 Admin Email。
+    - 生成 Base32 TOTP 密鑰並於終端機輸出 ASCII QR Code。
+    - 使用 Google Authenticator 掃碼完成打包桌最高權限初始綁定。
+
+--------------------------------------------------------------------------------
+
+【階段三：核心邏輯與演算法引擎實作】
+3.1 實作 GS1 條碼解析引擎 (gs1_parser.py)：
+    - 支援 ASCII 29 (\x1d)、\u001d、[GS]、<GS>、{GS} 等群組分隔符正規化。
+    - 解析固定長度 AI (01 GTIN, 17 EXP) 與非固定長度 AI (10 LOT, 21 SN, 30 QTY)。
+    - 強制以純文字型態（String）輸出 LOT 批號，確保開頭前導零（如 00821A）絕不遺失。
+3.2 實作 FEFO 演算法模組 (fefo_allocator.py)：
+    - 依有效期限升冪（EXP ASC）排序可用批次。
+    - 遇到單一批次不足額時，自動展開為多列明細（一品多批 Split Allocation）。
+    - 回傳 Allocation Lines 清單（完整承載品號、品名、條碼、儲位、批號、效期、預配數）。
+3.3 實作本地不可逆日誌記錄器 (audit_logger.py)：
+    - 掃碼核對通過時，以追加模式（a）寫入 outbound.log。
+    - 嚴格採用「|」作為唯一分隔符號：時間|單號|操作員|GTIN|品號|LOT|EXP|1|原始條碼。
+
+--------------------------------------------------------------------------------
+
+【階段四：前端動態模板拆解 (Jinja2 Templates)】
+4.1 將 preview.html 拆解為模組化 Jinja2 模板：
+    - templates/base.html：包含頂部導覽列（銷貨建單、揀貨單列印、品保閘門、Admin 中控台、帳號資安、系統架構）。
+    - templates/order_entry.html：建單介面、並排切齊之「同步 ERP 主檔」與「新增品項」按鈕、雙擊品項彈出 ERP 快查視窗、常駐垃圾桶、加寬 FEFO 明細表（強制不換行）。
+    - templates/picking_slips.html：純清單表格、多單勾選列印、全部列印、已列印狀態標記、@media print 純淨黑白向量列印容器。
+    - templates/scanner.html：Industrial Dark 工業高對比、大色塊綠燈 PASS / 紅燈 LOCK 反饋、品號/儲位/條碼/LOT/EXP 全要素核對卡片、禁止瀏覽器原生 alert。
+    - templates/admin.html：訂單狀態總覽（含建單日期）、單號點擊彈窗明細、批次拋轉 ECOUNT 按鈕、預留單筆/批次下載 CSV 按鈕。
+    - templates/security.html：獨立帳號資安頁面、作業人員名冊、線上動態派發 2FA 密鑰與現場 Google Authenticator QR Code 彈窗。
+
+--------------------------------------------------------------------------------
+
+【階段五：FastAPI 伺服器與路由總裝 (server.py)】
+5.1 身份認證與雙軌權限隔離中介層：
+    - Cookie-based TOTP 認證機制（get_current_user）。
+    - Admin 專屬權限檢查（get_admin_user），非 Admin 調用管理 API 強制回傳 HTTP 403 Forbidden。
+5.2 實作端點清單：
+    - POST /api/auth/login                  (Email + TOTP 6 位數密碼登入驗證)
+    - POST /api/erp/sync-products           (同步 ERP 商品主檔至本地資料庫)
+    - GET  /api/erp/products/search         (本地快取商品全文檢索)
+    - POST /api/orders/create-with-fefo     (多品項建立訂單與 FEFO 算批寫入)
+    - GET  /api/orders/{order_id}           (取得單筆訂單單頭與配批明細)
+    - POST /api/orders/mark-printed         (標記揀貨單已列印狀態)
+    - POST /api/scan/verify                 (品保閘門 2D 條碼全要素對撞驗證)
+    - POST /api/admin/orders/batch-sync-ecount (Admin 專屬批次 ECOUNT 銷單過帳)
+    - GET  /api/admin/orders/{order_id}/export-csv (預留 CSV 匯出端點)
+    - POST /api/admin/users/create          (Admin 專屬派發新進人員 2FA 金鑰)
+
+--------------------------------------------------------------------------------
+
+【階段六：系統整合測試與驗收簽核】
+6.1 本機伺服器綁定確認：
+    - 啟動指令：uvicorn server:app --host 0.0.0.0 --port 8000
+    - 確認服務僅限打包桌區域網路連線，無任何外網穿透服務。
+6.2 業務防呆與驗收項目檢核：
+    [ ] 執行 init_admin.py，使用 Google Authenticator 綁定成功並順利登入。
+    [ ] 建單頁面點擊「同步 ERP 主檔」，確認本機資料庫完成寫入；雙擊品號/品名/條碼彈出快查並自動回填跳轉。
+    [ ] 測試需求數量跨批庫存，確認 FEFO 自動拆單為多列 Allocation Lines。
+    [ ] 測試揀貨單勾選列印與全部列印，確認 window.print() 預覽輸出無 LOT/EXP、無暗黑背景、向量條碼清晰。
+    [ ] 測試故意刷讀錯誤條碼/批號/效期，確認前端全螢幕跳出紅色死鎖攔截，計數不增加。
+    [ ] 刷讀含開頭前導零批號（如 00821A），確認 outbound.log 與 SQLite 中前導零完整保留。
+    [ ] 全單刷齊後訂單狀態自動轉為 VERIFIED。
+    [ ] 使用 Operator 帳號嘗試拋轉，確認回傳 403；使用 Admin 帳號一鍵批次拋轉，確認狀態變更為 SYNCED 且不可重複過帳。
+================================================================================
