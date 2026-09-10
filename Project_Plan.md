@@ -27,7 +27,7 @@
   - **Operator（作業員）**：負責建單（支援一鍵同步 ERP 主檔、雙擊品號/品名/條碼彈出 ERP 快查視窗）、列印/重印揀貨單、實施 GS1 條碼掃描對撞驗證（GTIN、LOT、EXP 全要素核對）。全單齊件後，單據狀態轉為 `VERIFIED`，無直接發動 ERP 拋轉之權限。
   - **Admin（管理員）**：進入「Admin 中控台」審核單據（呈現單號、客戶編碼、建單日期、狀態，支援點擊單號彈窗查閱明細），支援單筆/批次 ECOUNT API 直拋過帳，並預留標準批次 CSV 匯出功能；僅 Admin 具備異常單據的強制重傳權限。
 - **技術棧選型**：
-  - **後端**：Python (FastAPI + Uvicorn) + SQLite3
+  - **後端**：Python (FastAPI + Uvicorn) + SQLite3 + cryptography
   - **前端**：Jinja2 模板 + Tailwind CSS + Alpine.js + Lucide Icons + JsBarcode + qrcode.js
 
 ---
@@ -242,6 +242,57 @@ def write_outbound_log(order_id: str, operator_email: str, gtin: str, item_code:
     log_line = f"{timestamp}|{order_id}|{operator_email}|{gtin}|{item_code}|{lot}|{exp}|1|{raw_code}\n"
     with open("outbound.log", "a", encoding="utf-8") as f:
         f.write(log_line)
+```
+
+### 3.5. 本地自簽 SSL 憑證生成腳本 (`generate_cert.py`)
+
+使用 `cryptography` 產出效期 10 年（3650 天）之自簽憑證 `cert.pem` 與私鑰 `key.pem`。Subject Alternative Name (SAN) 必須包含 `192.168.0.121` 與 `localhost`，解除行動端瀏覽器在 HTTP 下封鎖 WebRTC `getUserMedia` 鏡頭調用之限制。
+
+```python
+from datetime import datetime, timedelta
+import ipaddress
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+
+def generate_self_signed_cert(cert_path="cert.pem", key_path="key.pem"):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, "TW"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "autoDen WMS"),
+        x509.NameAttribute(NameOID.COMMON_NAME, "192.168.0.121"),
+    ])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.utcnow())
+        .not_valid_after(datetime.utcnow() + timedelta(days=3650))
+        .add_extension(
+            x509.SubjectAlternativeName([
+                x509.IPAddress(ipaddress.IPv4Address("192.168.0.121")),
+                x509.DNSName("localhost"),
+                x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+            ]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    with open(key_path, "wb") as f:
+        f.write(key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        ))
+    with open(cert_path, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+
+if __name__ == "__main__":
+    generate_self_signed_cert()
 ```
 
 ---
@@ -506,7 +557,7 @@ def admin_create_user(payload: CreateUserPayload, admin: dict = Depends(get_admi
 
 ### 5.3. 打包品保閘門畫面 (`scanner.html`)
 - 待驗卡片完整顯示：品號、品名、儲位、目標 GTIN、目標 LOT（保留前導零）、目標 EXP（效期）全要素對撞。
-- 專門隱藏 input 接駁 2D 槍實體訊號，嚴禁 alert 彈窗。
+- 專門隱藏 input 接駁 2D 槍實體訊號，嚴禁 alert 彈窗；隱藏 input 標籤中配置 `inputmode="latin"` 與 `style="ime-mode: disabled;"` 屬性，阻斷中文組字行為以確保條碼掃描訊號純淨接收。
 
 ### 5.4. Admin 審核與拋轉中控台 (`admin.html`)
 - 表格欄位：單號（點擊彈出明細 Modal）、客戶編碼、建單日期、狀態、建立者、操作。
@@ -522,6 +573,7 @@ def admin_create_user(payload: CreateUserPayload, admin: dict = Depends(get_admi
 ## 6. 開發與部署階段驗收檢查表 (Checklist)
 
 - [ ] **環境鎖定**：確認打包桌本機 `server.py` 綁定 `0.0.0.0:8000`，外部路由器無映射端口，完全阻斷外網連線。
+- [ ] **SSL 憑證與相機授權**：執行 `generate_cert.py` 產出憑證，並驗證手機經由 `https://192.168.0.121:8000` 連線可調用鏡頭。
 - [ ] **ERP 品項同步與雙擊快查**：
   - [ ] 驗證「同步 ERP 主檔」按鈕觸發後成功自 ECOUNT 拉取主檔至本地 SQLite `erp_products`。
   - [ ] 驗證建單介面品號、品名、商品條碼任一欄位雙擊彈出 ERP 品項快查視窗，選取後完整回填並自動跳轉「需求數」。

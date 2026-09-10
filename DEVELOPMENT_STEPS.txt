@@ -8,6 +8,7 @@ autoDen 系統後續開發與工程實作步驟清單 (DEVELOPMENT STEPS)
 1.1 建立 Python 套件依賴清單 (requirements.txt)：
     - fastapi >= 0.100.0
     - uvicorn[standard] >= 0.22.0
+    - cryptography >= 41.0.0
     - pyotp >= 2.8.0
     - qrcode[pil] >= 7.4.2
     - pydantic >= 2.0.0
@@ -16,6 +17,9 @@ autoDen 系統後續開發與工程實作步驟清單 (DEVELOPMENT STEPS)
 1.2 建立專案目錄結構：
     autoDen/
     ├── server.py              (FastAPI 核心伺服器)
+    ├── generate_cert.py       (自簽 SSL 憑證生成腳本)
+    ├── cert.pem               (自簽 SSL 伺服器憑證)
+    ├── key.pem                (自簽 SSL 伺服器私鑰)
     ├── init_db.py             (SQLite 資料庫全結構初始化)
     ├── init_admin.py          (終端機 Admin 2FA 初始化腳本)
     ├── gs1_parser.py          (GS1 DataMatrix 解析引擎)
@@ -31,6 +35,10 @@ autoDen 系統後續開發與工程實作步驟清單 (DEVELOPMENT STEPS)
     ├── static/                (離線靜態資源：JS/CSS/條碼庫)
     ├── autoden.db             (SQLite 實體資料庫，由腳本生成)
     └── outbound.log           (本地純文字追加日誌)
+1.3 實作本地自簽 SSL 憑證生成腳本 (generate_cert.py)：
+    - 使用 cryptography 生成效期 10 年之 cert.pem 與 key.pem。
+    - SAN (Subject Alternative Name) 配置 192.168.0.121 與 localhost。
+    - 解除手機行動端瀏覽器在純 HTTP 下封鎖相機調用（getUserMedia）之安全限制。
 
 --------------------------------------------------------------------------------
 
@@ -68,7 +76,7 @@ autoDen 系統後續開發與工程實作步驟清單 (DEVELOPMENT STEPS)
     - templates/base.html：包含頂部導覽列（銷貨建單、揀貨單列印、品保閘門、Admin 中控台、帳號資安、系統架構）。
     - templates/order_entry.html：建單介面、並排切齊之「同步 ERP 主檔」與「新增品項」按鈕、雙擊品項彈出 ERP 快查視窗、常駐垃圾桶、加寬 FEFO 明細表（強制不換行）。
     - templates/picking_slips.html：純清單表格、多單勾選列印、全部列印、已列印狀態標記、@media print 純淨黑白向量列印容器。
-    - templates/scanner.html：Industrial Dark 工業高對比、大色塊綠燈 PASS / 紅燈 LOCK 反饋、品號/儲位/條碼/LOT/EXP 全要素核對卡片、禁止瀏覽器原生 alert。
+    - templates/scanner.html：Industrial Dark 工業高對比、大色塊綠燈 PASS / 紅燈 LOCK 反饋、品號/儲位/條碼/LOT/EXP 全要素核對卡片、禁止瀏覽器原生 alert、隱藏 input 加入拉丁語系限制以防輸入法組字 (配置 inputmode="latin" 與 style="ime-mode: disabled;")。
     - templates/admin.html：訂單狀態總覽（含建單日期）、單號點擊彈窗明細、批次拋轉 ECOUNT 按鈕、預留單筆/批次下載 CSV 按鈕。
     - templates/security.html：獨立帳號資安頁面、作業人員名冊、線上動態派發 2FA 密鑰與現場 Google Authenticator QR Code 彈窗。
 
@@ -94,9 +102,10 @@ autoDen 系統後續開發與工程實作步驟清單 (DEVELOPMENT STEPS)
 
 【階段六：系統整合測試與驗收簽核】
 6.1 本機伺服器綁定確認：
-    - 啟動指令：uvicorn server:app --host 0.0.0.0 --port 8000
+    - 啟動指令：uvicorn server:app --host 0.0.0.0 --port 8000 --ssl-keyfile key.pem --ssl-certfile cert.pem
     - 確認服務僅限打包桌區域網路連線，無任何外網穿透服務。
 6.2 業務防呆與驗收項目檢核：
+    [ ] 執行 generate_cert.py 產出憑證，手機以 HTTPS (https://192.168.0.121:8000) 瀏覽並調用相機權限成功。
     [ ] 執行 init_admin.py，使用 Google Authenticator 綁定成功並順利登入。
     [ ] 建單頁面點擊「同步 ERP 主檔」，確認本機資料庫完成寫入；雙擊品號/品名/條碼彈出快查並自動回填跳轉。
     [ ] 測試需求數量跨批庫存，確認 FEFO 自動拆單為多列 Allocation Lines。
